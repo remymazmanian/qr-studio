@@ -1,0 +1,40 @@
+{
+    "name": "remymazmanian/qr-studio",
+    "description": "Framework-agnostic PHP library for generating styled QR codes as SVG or PNG, with module, eye and frame styles, centre logos and captions.",
+    "type": "library",
+    "keywords": ["qr", "qrcode", "svg", "png", "generator", "vcard", "wifi"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Remy Mazmanian",
+            "role": "Author"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "endroid/qr-code": "^6.1",
+        "ext-gd": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0 || ^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "QrStudio\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "QrStudio\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "demo": "php -S localhost:8080 -t demo"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
