@@ -31,8 +31,11 @@ file_put_contents('styled.png', $renderer->result('https://example.com', 'png', 
 
 ## Install
 
+QR Studio isn't on Packagist yet, so add the GitHub repository first:
+
 ```bash
-composer require remymazmanian/qr-studio
+composer config repositories.qr-studio vcs https://github.com/remymazmanian/qr-studio
+composer require remymazmanian/qr-studio:^0.1
 ```
 
 Requires **PHP 8.4+** (inherited from `endroid/qr-code` 6.x) and the **GD**
