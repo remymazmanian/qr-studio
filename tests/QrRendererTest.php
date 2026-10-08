@@ -13,9 +13,40 @@ class QrRendererTest extends TestCase
 {
     private QrRenderer $renderer;
 
+    /** @var list<string> */
+    private array $tempFiles = [];
+
     protected function setUp(): void
     {
         $this->renderer = new QrRenderer();
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->tempFiles as $file) {
+            @unlink($file);
+        }
+    }
+
+    private function tempFile(string $contents): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'qrstudio_test_');
+        file_put_contents($path, $contents);
+        $this->tempFiles[] = $path;
+
+        return $path;
+    }
+
+    private function pngLogo(): string
+    {
+        $image = imagecreatetruecolor(32, 32);
+        imagefilledrectangle($image, 0, 0, 31, 31, imagecolorallocate($image, 200, 30, 30));
+        ob_start();
+        imagepng($image);
+        $png = (string) ob_get_clean();
+        imagedestroy($image);
+
+        return $this->tempFile($png);
     }
 
     public function test_it_renders_svg(): void
@@ -143,5 +174,63 @@ class QrRendererTest extends TestCase
         preg_match('/width="(\d+)"/', $large, $largeMatch);
 
         $this->assertGreaterThan((int) $smallMatch[1], (int) $largeMatch[1]);
+    }
+
+    /**
+     * Regression: the PNG caption path used to call a framework helper that does
+     * not exist outside Laravel, so any PNG with a caption was a fatal error.
+     */
+    public function test_it_renders_a_png_with_a_caption(): void
+    {
+        $plain = $this->renderer->result('https://example.com', 'png')->getString();
+        $captioned = $this->renderer->result('https://example.com', 'png', DesignOptions::fromArray([
+            'label_text' => 'Scan me',
+        ]))->getString();
+
+        $this->assertSame("\x89PNG", substr($captioned, 0, 4));
+        $this->assertGreaterThan(getimagesizefromstring($plain)[1], getimagesizefromstring($captioned)[1]);
+    }
+
+    public function test_it_renders_a_png_with_a_logo(): void
+    {
+        $plain = $this->renderer->result('https://example.com', 'png')->getString();
+        $withLogo = $this->renderer->result('https://example.com', 'png', DesignOptions::fromArray([
+            'logo_path' => $this->pngLogo(),
+        ]))->getString();
+
+        $this->assertSame("\x89PNG", substr($withLogo, 0, 4));
+        $this->assertNotSame($plain, $withLogo);
+    }
+
+    public function test_it_embeds_a_logo_in_svg(): void
+    {
+        $svg = $this->renderer->result('https://example.com', 'svg', DesignOptions::fromArray([
+            'logo_path' => $this->pngLogo(),
+        ]))->getString();
+
+        $this->assertStringContainsString('<image href="data:image/png;base64,', $svg);
+    }
+
+    public function test_svg_rejects_a_logo_that_is_not_an_image(): void
+    {
+        $options = DesignOptions::fromArray([
+            'logo_path' => $this->tempFile("not an image\n"),
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Logo must be a PNG, JPEG, GIF or WebP image');
+
+        $this->renderer->result('https://example.com', 'svg', $options);
+    }
+
+    public function test_png_rejects_a_logo_that_is_not_an_image(): void
+    {
+        $options = DesignOptions::fromArray([
+            'logo_path' => $this->tempFile("not an image\n"),
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->renderer->result('https://example.com', 'png', $options);
     }
 }
