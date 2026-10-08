@@ -4,6 +4,7 @@ namespace QrStudio;
 
 use Endroid\QrCode\Bacon\MatrixFactory;
 use Endroid\QrCode\Encoding\Encoding;
+use Endroid\QrCode\Label\Font\OpenSans;
 use Endroid\QrCode\Matrix\MatrixInterface;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\RoundBlockSizeMode;
@@ -182,7 +183,7 @@ class QrRenderer
             return '';
         }
 
-        $mime = mime_content_type($path) ?: 'image/png';
+        $mime = $this->logoMimeType($path);
         $data = file_get_contents($path);
 
         if ($data === false) {
@@ -383,7 +384,7 @@ class QrRenderer
         }
 
         $color = $this->allocate($image, $options->labelColor);
-        $font = base_path('vendor/endroid/qr-code/assets/open_sans.ttf');
+        $font = (new OpenSans())->getPath();
 
         if (function_exists('imagettftext') && is_file($font)) {
             $box = imagettfbbox($options->labelFontSize, 0, $font, $options->labelText);
@@ -480,9 +481,20 @@ class QrRenderer
         }
     }
 
-    private function logoImage(string $path)
+    private function logoMimeType(string $path): string
     {
         $mime = mime_content_type($path);
+
+        if (! in_array($mime, ['image/png', 'image/jpeg', 'image/gif', 'image/webp'], true)) {
+            throw new InvalidArgumentException('Logo must be a PNG, JPEG, GIF or WebP image; got '.($mime ?: 'an unknown type').'.');
+        }
+
+        return $mime;
+    }
+
+    private function logoImage(string $path)
+    {
+        $mime = $this->logoMimeType($path);
 
         return match ($mime) {
             'image/png' => @imagecreatefrompng($path),
