@@ -36,7 +36,8 @@ composer require remymazmanian/qr-studio
 ```
 
 Requires **PHP 8.4+** (inherited from `endroid/qr-code` 6.x) and the **GD**
-extension for PNG output. SVG output does not need GD.
+extension. GD does the PNG drawing, and `composer.json` requires `ext-gd` for every
+install, including projects that only render SVG.
 
 ## Demo
 
