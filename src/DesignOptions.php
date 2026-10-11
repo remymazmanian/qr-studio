@@ -3,9 +3,18 @@
 namespace QrStudio;
 
 use Endroid\QrCode\ErrorCorrectionLevel;
+use InvalidArgumentException;
 
 class DesignOptions
 {
+    public const MIN_SIZE = 64;
+    public const MAX_SIZE = 4096;
+    public const MAX_MARGIN = 1024;
+    public const MIN_LABEL_FONT_SIZE = 8;
+    public const MAX_LABEL_FONT_SIZE = 200;
+    // The QR spec's quiet zone: light space around the code, in modules.
+    public const QUIET_ZONE_MODULES = 4;
+
     public const MODULE_SQUARE = 'square';
     public const MODULE_ROUNDED = 'rounded';
     public const MODULE_DOTS = 'dots';
@@ -36,6 +45,7 @@ class DesignOptions
         public readonly int $labelFontSize,
         public readonly string $labelColor,
         public readonly ?string $designPreset = null,
+        public readonly ?string $labelFontPath = null,
     ) {
     }
 
@@ -58,6 +68,7 @@ class DesignOptions
             'label_text' => null,
             'label_font_size' => 28,
             'label_color' => '#000000',
+            'label_font_path' => null,
         ];
     }
 
@@ -152,28 +163,91 @@ class DesignOptions
         ];
     }
 
+    /**
+     * Builds options from an array of snake_case keys. Unknown styles, colours that
+     * aren't #rgb or #rrggbb, and out-of-range sizes throw InvalidArgumentException
+     * instead of silently rendering something else.
+     */
     public static function fromArray(array $data): self
     {
         $data = array_replace(self::defaults(), $data);
 
         return new self(
-            foregroundColor: (string) $data['foreground_color'],
-            backgroundColor: (string) $data['background_color'],
+            foregroundColor: self::color($data, 'foreground_color'),
+            backgroundColor: self::color($data, 'background_color'),
             transparentBackground: (bool) $data['transparent_background'],
-            size: (int) $data['qr_size'],
-            margin: (int) $data['margin'],
-            errorCorrectionLevel: (string) $data['error_correction_level'],
-            logoPath: self::filled($data['logo_path'] ?? null) ? (string) $data['logo_path'] : null,
-            logoSizePercentage: (int) $data['logo_size_percentage'],
-            moduleStyle: (string) $data['module_style'],
-            eyeStyle: (string) $data['eye_style'],
-            eyeColor: (string) $data['eye_color'],
-            frameStyle: (string) $data['frame_style'],
-            labelText: self::filled($data['label_text'] ?? null) ? (string) $data['label_text'] : null,
-            labelFontSize: (int) $data['label_font_size'],
-            labelColor: (string) $data['label_color'],
+            size: self::integer($data, 'qr_size', self::MIN_SIZE, self::MAX_SIZE),
+            margin: self::integer($data, 'margin', 0, self::MAX_MARGIN),
+            errorCorrectionLevel: self::choice($data, 'error_correction_level', self::errorCorrectionLevels()),
+            logoPath: self::localPath($data, 'logo_path'),
+            logoSizePercentage: self::integer($data, 'logo_size_percentage', 0, 100),
+            moduleStyle: self::choice($data, 'module_style', self::moduleStyles()),
+            eyeStyle: self::choice($data, 'eye_style', self::eyeStyles()),
+            eyeColor: self::color($data, 'eye_color'),
+            frameStyle: self::choice($data, 'frame_style', self::frameStyles()),
+            labelText: self::label($data['label_text'] ?? null),
+            labelFontSize: self::integer($data, 'label_font_size', self::MIN_LABEL_FONT_SIZE, self::MAX_LABEL_FONT_SIZE),
+            labelColor: self::color($data, 'label_color'),
             designPreset: self::filled($data['design_preset'] ?? null) ? (string) $data['design_preset'] : null,
+            labelFontPath: self::localPath($data, 'label_font_path'),
         );
+    }
+
+    private static function color(array $data, string $key): string
+    {
+        return ColorContrast::normalizeHex($data[$key])
+            ?? throw new InvalidArgumentException($key.' must be a hex colour such as #1f3d7a or #fff.');
+    }
+
+    private static function integer(array $data, string $key, int $min, int $max): int
+    {
+        $value = filter_var($data[$key], FILTER_VALIDATE_INT);
+
+        if ($value === false || $value < $min || $value > $max) {
+            throw new InvalidArgumentException($key.' must be a whole number from '.$min.' to '.$max.'.');
+        }
+
+        return $value;
+    }
+
+    private static function choice(array $data, string $key, array $allowed): string
+    {
+        $value = (string) $data[$key];
+
+        if (! array_key_exists($value, $allowed)) {
+            throw new InvalidArgumentException($key.' must be one of: '.implode(', ', array_keys($allowed)).'.');
+        }
+
+        return $value;
+    }
+
+    // Paths must be plain local files: stream wrappers such as phar:// or ftp:// are refused.
+    private static function localPath(array $data, string $key): ?string
+    {
+        if (! self::filled($data[$key] ?? null)) {
+            return null;
+        }
+
+        $path = (string) $data[$key];
+
+        if (str_contains($path, '://') || str_contains($path, "\0")) {
+            throw new InvalidArgumentException($key.' must be a path on the local filesystem.');
+        }
+
+        return realpath($path) ?: $path;
+    }
+
+    // Captions are one line: control characters are dropped and line breaks become spaces.
+    private static function label(mixed $value): ?string
+    {
+        if (! self::filled($value)) {
+            return null;
+        }
+
+        $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', (string) $value) ?? '';
+        $text = trim(preg_replace('/\s*[\r\n]+\s*/u', ' ', $text) ?? '');
+
+        return $text === '' ? null : $text;
     }
 
     public function toArray(): array
@@ -195,6 +269,7 @@ class DesignOptions
             'label_text' => $this->labelText,
             'label_font_size' => $this->labelFontSize,
             'label_color' => $this->labelColor,
+            'label_font_path' => $this->labelFontPath,
         ];
     }
 
@@ -206,6 +281,19 @@ class DesignOptions
             'quartile' => ErrorCorrectionLevel::Quartile,
             default => ErrorCorrectionLevel::High,
         };
+    }
+
+    /**
+     * The level actually used. A centre logo covers modules the code needs, so low
+     * and medium are raised to quartile when a logo is drawn.
+     */
+    public function effectiveErrorCorrection(): ErrorCorrectionLevel
+    {
+        if ($this->hasLogo() && in_array($this->errorCorrectionLevel, ['low', 'medium'], true)) {
+            return ErrorCorrectionLevel::Quartile;
+        }
+
+        return $this->errorCorrectionEnum();
     }
 
     /**
@@ -231,6 +319,11 @@ class DesignOptions
         return $value !== null && $value !== '' && $value !== [];
     }
 
+    /**
+     * Colour for the light parts drawn on top of the code: the gap inside each
+     * finder pattern and the panel behind a logo. With a transparent background
+     * these stay white, since the code needs them to scan.
+     */
     public function effectiveBackgroundColor(): string
     {
         return $this->transparentBackground ? '#ffffff' : $this->backgroundColor;

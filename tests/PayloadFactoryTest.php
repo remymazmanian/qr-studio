@@ -42,8 +42,9 @@ class PayloadFactoryTest extends TestCase
         ]);
 
         $this->assertStringStartsWith('mailto:hello@example.com?', $payload);
-        $this->assertStringContainsString('subject=Hi+there', $payload);
-        $this->assertStringContainsString('body=Line+one', $payload);
+        // RFC 6068: spaces are %20 in mailto links; + would show up literally.
+        $this->assertStringContainsString('subject=Hi%20there', $payload);
+        $this->assertStringContainsString('body=Line%20one', $payload);
     }
 
     public function test_email_payload_without_extras_has_no_query_string(): void
@@ -100,7 +101,9 @@ class PayloadFactoryTest extends TestCase
             'vcard_email' => 'ada@example.com',
         ]);
 
-        $this->assertStringStartsWith("BEGIN:VCARD\nVERSION:3.0", $payload);
+        // vCard 3.0 lines end in CRLF and require N as well as FN.
+        $this->assertStringStartsWith("BEGIN:VCARD\r\nVERSION:3.0\r\n", $payload);
+        $this->assertStringContainsString("\r\nN:Lovelace;Ada;;;\r\n", $payload);
         $this->assertStringContainsString('FN:Ada Lovelace', $payload);
         $this->assertStringContainsString('ORG:Analytical Engines', $payload);
         $this->assertStringContainsString('EMAIL:ada@example.com', $payload);
@@ -153,5 +156,52 @@ class PayloadFactoryTest extends TestCase
 
             $this->assertNotSame('', $payload, "Type [{$type}] produced an empty payload.");
         }
+    }
+
+    public function test_email_address_characters_cannot_add_recipients(): void
+    {
+        $payload = $this->factory->make(['type' => 'email', 'email_address' => 'a?cc=evil@example.com']);
+
+        $this->assertSame('mailto:a%3Fcc%3Devil@example.com', $payload);
+    }
+
+    public function test_an_invalid_email_address_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('email_address must be a valid email address');
+
+        $this->factory->make(['type' => 'email', 'email_address' => 'not an address']);
+    }
+
+    public function test_wifi_encryption_cannot_inject_fields(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('wifi_encryption must be WPA, WEP or nopass');
+
+        $this->factory->make(['type' => 'wifi', 'wifi_ssid' => 'Home', 'wifi_encryption' => 'WPA;S:Evil']);
+    }
+
+    public function test_wpa2_and_wpa3_networks_are_written_as_wpa(): void
+    {
+        foreach (['WPA2', 'wpa3', 'wpa'] as $encryption) {
+            $payload = $this->factory->make(['type' => 'wifi', 'wifi_ssid' => 'Home', 'wifi_password' => 'secret', 'wifi_encryption' => $encryption]);
+            $this->assertStringStartsWith('WIFI:T:WPA;S:Home;', $payload);
+        }
+    }
+
+    public function test_vcard_urls_keep_their_commas(): void
+    {
+        $payload = $this->factory->make(['type' => 'vcard', 'vcard_name' => 'Ada', 'vcard_url' => 'https://example.com/a,b;c']);
+
+        $this->assertStringContainsString("\r\nURL:https://example.com/a,b;c\r\n", $payload);
+        $this->assertStringContainsString("\r\nN:;Ada;;;\r\n", $payload);
+    }
+
+    public function test_an_unknown_type_is_rejected_with_a_clear_message(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('type must be one of: url, phone, email, vcard, wifi, text');
+
+        $this->factory->make(['type' => 'sms']);
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace QrStudio\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use QrStudio\DesignOptions;
 use QrStudio\QrRenderer;
@@ -44,7 +45,6 @@ class QrRendererTest extends TestCase
         ob_start();
         imagepng($image);
         $png = (string) ob_get_clean();
-        imagedestroy($image);
 
         return $this->tempFile($png);
     }
@@ -58,6 +58,7 @@ class QrRendererTest extends TestCase
         $this->assertStringContainsString('<svg', $result->getString());
     }
 
+    #[RequiresPhpExtension('gd')]
     public function test_it_renders_png(): void
     {
         $result = $this->renderer->result('https://example.com', 'png');
@@ -180,6 +181,7 @@ class QrRendererTest extends TestCase
      * Regression: the PNG caption path used to call a framework helper that does
      * not exist outside Laravel, so any PNG with a caption was a fatal error.
      */
+    #[RequiresPhpExtension('gd')]
     public function test_it_renders_a_png_with_a_caption(): void
     {
         $plain = $this->renderer->result('https://example.com', 'png')->getString();
@@ -191,6 +193,7 @@ class QrRendererTest extends TestCase
         $this->assertGreaterThan(getimagesizefromstring($plain)[1], getimagesizefromstring($captioned)[1]);
     }
 
+    #[RequiresPhpExtension('gd')]
     public function test_it_renders_a_png_with_a_logo(): void
     {
         $plain = $this->renderer->result('https://example.com', 'png')->getString();
@@ -202,6 +205,7 @@ class QrRendererTest extends TestCase
         $this->assertNotSame($plain, $withLogo);
     }
 
+    #[RequiresPhpExtension('gd')]
     public function test_it_embeds_a_logo_in_svg(): void
     {
         $svg = $this->renderer->result('https://example.com', 'svg', DesignOptions::fromArray([
@@ -223,6 +227,7 @@ class QrRendererTest extends TestCase
         $this->renderer->result('https://example.com', 'svg', $options);
     }
 
+    #[RequiresPhpExtension('gd')]
     public function test_png_rejects_a_logo_that_is_not_an_image(): void
     {
         $options = DesignOptions::fromArray([

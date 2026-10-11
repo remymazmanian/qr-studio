@@ -6,7 +6,26 @@ class ColorContrast
 {
     public static function isHexColor(mixed $value): bool
     {
-        return is_string($value) && preg_match('/^#[0-9A-Fa-f]{6}$/', $value) === 1;
+        return self::normalizeHex($value) !== null;
+    }
+
+    /**
+     * Returns the colour as lowercase #rrggbb, expanding #rgb, or null when the
+     * value is not a hex colour.
+     */
+    public static function normalizeHex(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+
+        if (preg_match('/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/', $value, $short) === 1) {
+            return strtolower('#'.$short[1].$short[1].$short[2].$short[2].$short[3].$short[3]);
+        }
+
+        return preg_match('/^#[0-9A-Fa-f]{6}$/', $value) === 1 ? strtolower($value) : null;
     }
 
     public static function contrastRatio(string $first, string $second): float
@@ -34,7 +53,7 @@ class ColorContrast
 
     public static function rgb(string $hex): array
     {
-        $hex = ltrim($hex, '#');
+        $hex = ltrim(self::normalizeHex($hex) ?? throw new \InvalidArgumentException('Not a hex colour: '.$hex), '#');
 
         return [
             hexdec(substr($hex, 0, 2)),

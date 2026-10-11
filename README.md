@@ -1,9 +1,11 @@
 # QR Studio
 
+[![Tests](https://github.com/remymazmanian/qr-studio/actions/workflows/tests.yml/badge.svg)](https://github.com/remymazmanian/qr-studio/actions/workflows/tests.yml)
+
 A framework-agnostic PHP library for generating **styled** QR codes as SVG or PNG.
 
 Most QR libraries give you black squares. This one gives you control over module
-shape, eye shape, framing, colour, a centre logo and a caption — while keeping the
+shape, eye shape, framing, colour, a centre logo and a caption, while keeping the
 result scannable.
 
 ```php
@@ -31,16 +33,13 @@ file_put_contents('styled.png', $renderer->result('https://example.com', 'png', 
 
 ## Install
 
-QR Studio isn't on Packagist yet, so add the GitHub repository first:
-
 ```bash
-composer config repositories.qr-studio vcs https://github.com/remymazmanian/qr-studio
-composer require remymazmanian/qr-studio:^0.1
+composer require remymazmanian/qr-studio
 ```
 
-Requires **PHP 8.4+** (inherited from `endroid/qr-code` 6.x) and the **GD**
-extension. GD does the PNG drawing, and `composer.json` requires `ext-gd` for every
-install, including projects that only render SVG.
+Requires **PHP 8.4+** (inherited from `endroid/qr-code` 6.x). PNG output also needs
+the **GD** extension; SVG output works without it. Asking for a PNG without GD throws
+a `RuntimeException` that says so.
 
 ## Demo
 
@@ -65,13 +64,18 @@ rather than something to expose on a public host as-is.
 | `eye_style` | `square`, `rounded`, `circle` |
 | `frame_style` | `none`, `simple_border`, `rounded_card` |
 | `error_correction_level` | `low`, `medium`, `quartile`, `high` |
-| `foreground_color` / `background_color` / `eye_color` / `label_color` | any `#rrggbb` |
-| `transparent_background` | `bool` — omits the background rect entirely |
-| `qr_size` / `margin` | pixels |
-| `logo_path` / `logo_size_percentage` | absolute path, and 0–25% of the QR |
-| `label_text` / `label_font_size` | caption rendered beneath the code |
+| `foreground_color` / `background_color` / `eye_color` / `label_color` | `#rrggbb` or `#rgb` |
+| `transparent_background` | `bool`. Removes the background fill. The gap inside each eye and the panel behind a logo stay white, so the code still scans. |
+| `qr_size` | Size of the code itself in pixels, 64 to 4096. It's rounded down to a whole number of pixels per module, and the margin, frame and caption are added around it. |
+| `margin` | Pixels, 0 to 1024. Never less than the 4-module quiet zone scanners need. |
+| `logo_path` / `logo_size_percentage` | Local file path, and 0 to 25% of the QR (larger values are capped at 25%) |
+| `label_text` / `label_font_size` | One-line caption beneath the code, 8 to 200 px. Long captions shrink to fit, then end in "…". |
+| `label_font_path` | Optional TTF or OTF file for PNG captions, for scripts the bundled Open Sans doesn't cover |
 
-Three starting points are bundled — `generic`, `rounded_square` and `circle`:
+Options outside these values throw an `InvalidArgumentException` naming the option,
+so a typo such as `'module_style' => 'dot'` fails loudly instead of rendering squares.
+
+Three starting points are bundled: `generic`, `rounded_square` and `circle`:
 
 ```php
 $values = array_replace(
@@ -87,6 +91,11 @@ $options = DesignOptions::fromArray($values);
 `PayloadFactory` builds correctly-escaped payload strings, which matters more than
 it sounds: Wi-Fi and vCard payloads are delimiter-separated, so an unescaped `;`
 or `:` in a network name silently produces the wrong result on the scanning device.
+
+- **Email:** the address must be valid, and it's percent-encoded so it can't add recipients or headers.
+- **Wi-Fi:** `wifi_encryption` is `WPA` (WPA2 and WPA3 are written as WPA, which is what phones expect), `WEP` or `nopass`.
+- **vCard:** follows vCard 3.0, with CRLF line endings and the required `N` field derived from the name.
+- **Unknown values:** an unknown `type` or encryption throws an `InvalidArgumentException`.
 
 ```php
 use QrStudio\PayloadFactory;
@@ -117,16 +126,25 @@ if (ColorContrast::contrastRatio('#888888', '#ffffff') < 3.0) {
 }
 ```
 
-**Logos without headroom.** A centre logo covers data modules. Raise the error
-correction level to `high` whenever a logo is present, and keep
-`logo_size_percentage` at or below 25 — the library caps it there for this reason.
+**Logos without headroom.** A centre logo covers data modules. When a logo is
+drawn, `low` and `medium` error correction are raised to `quartile` automatically;
+use `high` for the most headroom. `logo_size_percentage` is capped at 25 for the
+same reason.
+
+**Too few pixels per module.** Very small PNGs leave each module only a few pixels.
+Modules are drawn to exact pixel boundaries, and below 6 px per module the `dots`
+style is drawn as squares so it stays readable.
 
 ## Logos
 
-`logo_path` is an **absolute filesystem path**. The library deliberately knows
-nothing about storage disks, upload directories or URL schemes; resolving a user
-upload to a real path is the calling application's job. That is what keeps this
-package free of any framework convention.
+`logo_path` is a **local filesystem path**. The library deliberately knows nothing
+about storage disks, upload directories or URL schemes; resolving a user upload to
+a real path is the calling application's job. That is what keeps this package free
+of any framework convention.
+
+Logos must be PNG, JPEG, GIF or WebP. Paths with a stream wrapper such as `phar://`
+or `https://` are refused, and so are images larger than 4096 pixels on either side,
+which are checked before anything is decoded.
 
 ## Output
 
@@ -149,10 +167,15 @@ $renderer->dataUri($payload);  // shorthand
 composer test
 ```
 
+Besides unit tests, the suite renders codes across sizes, styles, error-correction
+levels and logos, then decodes each PNG with an independent QR reader, so a code
+that looks right but doesn't scan fails the build. GitHub Actions runs it on PHP 8.4
+and 8.5, and without GD.
+
 ## Credits
 
 Created by **Remy Mazmanian**.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

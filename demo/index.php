@@ -146,7 +146,13 @@ foreach ([['foreground_color', 'Foreground'], ['eye_color', 'Eye']] as [$key, $l
     }
 }
 
-$options = DesignOptions::fromArray($values);
+try {
+    $options = DesignOptions::fromArray($values);
+} catch (\InvalidArgumentException $e) {
+    $errors[] = $e->getMessage();
+    $options = DesignOptions::fromArray(DesignOptions::defaults());
+}
+
 $format = in_array(field('format'), ['svg', 'png'], true) ? field('format') : 'svg';
 
 $svg = '';

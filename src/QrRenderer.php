@@ -10,9 +10,14 @@ use Endroid\QrCode\QrCode;
 use Endroid\QrCode\RoundBlockSizeMode;
 use Endroid\QrCode\Writer\Result\ResultInterface;
 use InvalidArgumentException;
+use RuntimeException;
 
 class QrRenderer
 {
+    // Logos larger than this on either side are refused before decoding: a small
+    // file can declare a huge image and exhaust memory when GD decodes it.
+    public const MAX_LOGO_DIMENSION = 4096;
+
     public function result(string $payload, string $format, int|DesignOptions|null $options = null): ResultInterface
     {
         $options = $this->normalizeOptions($options);
@@ -50,7 +55,7 @@ class QrRenderer
         $qrCode = new QrCode(
             data: $payload,
             encoding: new Encoding('UTF-8'),
-            errorCorrectionLevel: $options->errorCorrectionEnum(),
+            errorCorrectionLevel: $options->effectiveErrorCorrection(),
             size: $options->size,
             margin: 0,
             roundBlockSizeMode: RoundBlockSizeMode::Shrink,
@@ -204,11 +209,15 @@ class QrRenderer
             return '';
         }
 
-        return '<text x="'.$this->format($geometry['width'] / 2).'" y="'.$this->format($geometry['labelBaseline']).'" text-anchor="middle" font-family="Instrument Sans, Arial, sans-serif" font-size="'.$options->labelFontSize.'" font-weight="700" fill="'.$this->escape($options->labelColor).'">'.$this->escape($options->labelText).'</text>';
+        return '<text x="'.$this->format($geometry['width'] / 2).'" y="'.$this->format($geometry['labelBaseline']).'" text-anchor="middle" font-family="Open Sans, Arial, Helvetica, sans-serif" font-size="'.$geometry['labelSize'].'" fill="'.$this->escape($options->labelColor).'">'.$this->escape($geometry['labelText']).'</text>';
     }
 
     private function png(MatrixInterface $matrix, DesignOptions $options): string
     {
+        if (! function_exists('imagecreatetruecolor')) {
+            throw new RuntimeException('PNG output needs the PHP GD extension. SVG output works without it.');
+        }
+
         $geometry = $this->geometry($matrix, $options);
         $image = imagecreatetruecolor($geometry['width'], $geometry['height']);
 
@@ -235,7 +244,6 @@ class QrRenderer
         ob_start();
         imagepng($image);
         $content = (string) ob_get_clean();
-        imagedestroy($image);
 
         return $content;
     }
@@ -283,13 +291,25 @@ class QrRenderer
 
     private function drawPngModule($image, float $x, float $y, float $block, string $style, int $color): void
     {
+        // GD fills both end pixels of a rectangle, so a module spans x1..x1 + block - 1.
         $x1 = (int) round($x);
         $y1 = (int) round($y);
-        $x2 = (int) round($x + $block);
-        $y2 = (int) round($y + $block);
+        $x2 = (int) round($x + $block) - 1;
+        $y2 = (int) round($y + $block) - 1;
+
+        // Below 6 px per module a GD circle can't be centred in its cell and
+        // scanners misread it, so small dots are drawn as full squares.
+        if ($style === DesignOptions::MODULE_DOTS && $x2 - $x1 + 1 < 6) {
+            imagefilledrectangle($image, $x1, $y1, $x2, $y2, $color);
+
+            return;
+        }
 
         if ($style === DesignOptions::MODULE_DOTS) {
-            imagefilledellipse($image, (int) round($x + $block / 2), (int) round($y + $block / 2), (int) round($block * 0.92), (int) round($block * 0.92), $color);
+            // An ellipse of odd diameter d centred on a pixel covers exactly d pixels.
+            $diameter = max(1, (int) floor($block * 0.92));
+            $diameter -= $diameter % 2 === 0 ? 1 : 0;
+            imagefilledellipse($image, intdiv($x1 + $x2, 2), intdiv($y1 + $y2, 2), $diameter, $diameter, $color);
 
             return;
         }
@@ -330,11 +350,11 @@ class QrRenderer
         $inner = $block * 3;
 
         if ($options->eyeStyle === DesignOptions::EYE_CIRCLE) {
-            $cx = (int) round($x + $outer / 2);
-            $cy = (int) round($y + $outer / 2);
-            imagefilledellipse($image, $cx, $cy, (int) round($outer), (int) round($outer), $color);
-            imagefilledellipse($image, $cx, $cy, (int) round($middle), (int) round($middle), $background);
-            imagefilledellipse($image, $cx, $cy, (int) round($inner), (int) round($inner), $color);
+            $cx = (int) round($x + ($outer - 1) / 2);
+            $cy = (int) round($y + ($outer - 1) / 2);
+            imagefilledellipse($image, $cx, $cy, (int) round($outer) - 1, (int) round($outer) - 1, $color);
+            imagefilledellipse($image, $cx, $cy, (int) round($middle) - 1, (int) round($middle) - 1, $background);
+            imagefilledellipse($image, $cx, $cy, (int) round($inner) - 1, (int) round($inner) - 1, $color);
 
             return;
         }
@@ -342,9 +362,9 @@ class QrRenderer
         $radius = $options->eyeStyle === DesignOptions::EYE_ROUNDED ? (int) round($block * 1.3) : 0;
         $smallRadius = $options->eyeStyle === DesignOptions::EYE_ROUNDED ? (int) round($block * 0.8) : 0;
 
-        $this->roundedRectangle($image, (int) round($x), (int) round($y), (int) round($x + $outer), (int) round($y + $outer), $radius, $color);
-        $this->roundedRectangle($image, (int) round($x + $block), (int) round($y + $block), (int) round($x + $block + $middle), (int) round($y + $block + $middle), $smallRadius, $background);
-        $this->roundedRectangle($image, (int) round($x + $block * 2), (int) round($y + $block * 2), (int) round($x + $block * 2 + $inner), (int) round($y + $block * 2 + $inner), $smallRadius, $color);
+        $this->roundedRectangle($image, (int) round($x), (int) round($y), (int) round($x + $outer) - 1, (int) round($y + $outer) - 1, $radius, $color);
+        $this->roundedRectangle($image, (int) round($x + $block), (int) round($y + $block), (int) round($x + $block + $middle) - 1, (int) round($y + $block + $middle) - 1, $smallRadius, $background);
+        $this->roundedRectangle($image, (int) round($x + $block * 2), (int) round($y + $block * 2), (int) round($x + $block * 2 + $inner) - 1, (int) round($y + $block * 2 + $inner) - 1, $smallRadius, $color);
     }
 
     private function drawPngLogo($image, array $geometry, DesignOptions $options): void
@@ -374,7 +394,6 @@ class QrRenderer
         $targetY = (int) round($y + ($size - $targetHeight) / 2);
 
         imagecopyresampled($image, $logo, $targetX, $targetY, 0, 0, $targetWidth, $targetHeight, $width, $height);
-        imagedestroy($logo);
     }
 
     private function drawPngLabel($image, array $geometry, DesignOptions $options): void
@@ -384,20 +403,22 @@ class QrRenderer
         }
 
         $color = $this->allocate($image, $options->labelColor);
-        $font = (new OpenSans())->getPath();
+        $font = $this->labelFont($options);
+        $text = $geometry['labelText'];
 
-        if (function_exists('imagettftext') && is_file($font)) {
-            $box = imagettfbbox($options->labelFontSize, 0, $font, $options->labelText);
+        if ($font !== null) {
+            $points = $this->pixelsToPoints($geometry['labelSize']);
+            $box = imagettfbbox($points, 0, $font, $text);
             $textWidth = abs(($box[2] ?? 0) - ($box[0] ?? 0));
             $x = (int) round(($geometry['width'] - $textWidth) / 2);
-            imagettftext($image, $options->labelFontSize, 0, $x, (int) round($geometry['labelBaseline']), $color, $font, $options->labelText);
+            imagettftext($image, $points, 0, $x, (int) round($geometry['labelBaseline']), $color, $font, $text);
 
             return;
         }
 
         $fontSize = 5;
-        $x = (int) round(($geometry['width'] - imagefontwidth($fontSize) * strlen($options->labelText)) / 2);
-        imagestring($image, $fontSize, $x, (int) round($geometry['labelBaseline'] - 14), $options->labelText, $color);
+        $x = (int) round(($geometry['width'] - imagefontwidth($fontSize) * strlen($text)) / 2);
+        imagestring($image, $fontSize, $x, (int) round($geometry['labelBaseline'] - 14), $text, $color);
     }
 
     private function geometry(MatrixInterface $matrix, DesignOptions $options): array
@@ -408,21 +429,28 @@ class QrRenderer
             DesignOptions::FRAME_SIMPLE_BORDER => 18,
             default => 0,
         };
-        $labelSpace = $options->labelText ? $options->labelFontSize + 28 : 0;
-        $width = $matrixSize + $options->margin * 2 + $framePadding * 2;
+        $block = $matrix->getBlockSize();
+        // Never less than the quiet zone scanners need around the code.
+        $margin = max($options->margin, (int) ceil($block * DesignOptions::QUIET_ZONE_MODULES));
+        $width = $matrixSize + $margin * 2 + $framePadding * 2;
+        [$labelText, $labelSize] = $this->fitLabel($options, $width - 2 * ($framePadding + 12));
+        $labelSpace = $labelText !== null ? $labelSize + 28 : 0;
         $height = $width + $labelSpace;
-        $qrX = $framePadding + $options->margin;
-        $qrY = $framePadding + $options->margin;
+        $qrX = $framePadding + $margin;
+        $qrY = $framePadding + $margin;
 
         return [
             'width' => $width,
             'height' => $height,
             'matrixSize' => $matrixSize,
-            'block' => $matrix->getBlockSize(),
+            'block' => $block,
+            'margin' => $margin,
             'framePadding' => $framePadding,
             'qrX' => $qrX,
             'qrY' => $qrY,
-            'labelBaseline' => $qrY + $matrixSize + $options->margin + $options->labelFontSize,
+            'labelText' => $labelText,
+            'labelSize' => $labelSize,
+            'labelBaseline' => $qrY + $matrixSize + $margin + $labelSize,
         ];
     }
 
@@ -483,10 +511,15 @@ class QrRenderer
 
     private function logoMimeType(string $path): string
     {
-        $mime = mime_content_type($path);
+        $info = @getimagesize($path);
+        $mime = $info['mime'] ?? null;
 
         if (! in_array($mime, ['image/png', 'image/jpeg', 'image/gif', 'image/webp'], true)) {
             throw new InvalidArgumentException('Logo must be a PNG, JPEG, GIF or WebP image; got '.($mime ?: 'an unknown type').'.');
+        }
+
+        if ($info[0] > self::MAX_LOGO_DIMENSION || $info[1] > self::MAX_LOGO_DIMENSION) {
+            throw new InvalidArgumentException('Logo is '.$info[0].' x '.$info[1].' pixels; the most allowed is '.self::MAX_LOGO_DIMENSION.' on each side.');
         }
 
         return $mime;
@@ -514,7 +547,62 @@ class QrRenderer
 
     private function escape(string $value): string
     {
-        return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        return htmlspecialchars($value, ENT_QUOTES | ENT_XML1 | ENT_SUBSTITUTE | ENT_DISALLOWED, 'UTF-8');
+    }
+
+    /**
+     * Shrinks the caption until it fits the available width, down to the minimum
+     * font size, then shortens it with an ellipsis. Returns [text, size in px].
+     */
+    private function fitLabel(DesignOptions $options, float $available): array
+    {
+        if ($options->labelText === null) {
+            return [null, 0];
+        }
+
+        $text = $options->labelText;
+        $size = $options->labelFontSize;
+
+        while ($size > DesignOptions::MIN_LABEL_FONT_SIZE && $this->labelWidth($options, $text, $size) > $available) {
+            $size--;
+        }
+
+        while (mb_strlen($text) > 1 && $this->labelWidth($options, $text, $size) > $available) {
+            $text = rtrim(mb_substr($text, 0, -2)).'…';
+        }
+
+        return [$text, $size];
+    }
+
+    private function labelWidth(DesignOptions $options, string $text, int $size): float
+    {
+        $font = $this->labelFont($options);
+
+        if ($font !== null) {
+            $box = imagettfbbox($this->pixelsToPoints($size), 0, $font, $text);
+
+            return abs(($box[2] ?? 0) - ($box[0] ?? 0));
+        }
+
+        // Without FreeType, estimate from Open Sans's average glyph width.
+        return mb_strlen($text) * $size * 0.56;
+    }
+
+    private function labelFont(DesignOptions $options): ?string
+    {
+        if (! function_exists('imagettfbbox')) {
+            return null;
+        }
+
+        $font = $options->labelFontPath ?? (new OpenSans())->getPath();
+
+        return is_file($font) ? $font : null;
+    }
+
+    // GD sizes TrueType text in points at 96 dpi; label_font_size is in pixels, as in SVG.
+    private function pixelsToPoints(int $pixels): float
+    {
+        return $pixels * 72 / 96;
     }
 
     private function format(float $value): string
