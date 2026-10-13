@@ -4,6 +4,8 @@
 
 A framework-agnostic PHP library for generating **styled** QR codes as SVG or PNG.
 
+**Docs, demo & setup guide:** [remymazmanian.com/qr-studio/](https://remymazmanian.com/qr-studio/)
+
 Most QR libraries give you black squares. This one gives you control over module
 shape, eye shape, framing, colour, a centre logo and a caption, while keeping the
 result scannable.
